@@ -1,0 +1,1 @@
+An Ansible playbook that is supposed to deploy an IPMI exporter and ServiceMontor on the ACM hub and feed metrics into the ACM observability stack. My idea is that this runs on the cloudkit-aap after cluster installation (either ocp or baremetal).
