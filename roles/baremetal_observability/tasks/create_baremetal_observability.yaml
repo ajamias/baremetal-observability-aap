@@ -1,0 +1,127 @@
+# This assumes that the openstack client can list the nodes on the OpenShift cluster
+- name: Get all baremetal nodes
+  openstack.cloud.baremetal_node_info:
+  register: baremetal_nodes
+
+- name: Extract IPMI addresses with ports
+  set_fact:
+    ipmi_addresses: >-
+      {{ baremetal_nodes.baremetal_nodes |
+        json_query('[].join(`:`,[driver_info.ipmi_address, to_string(driver_info.ipmi_terminal_port || default_ipmi_port)])') }}
+
+- name: Create baremetal_observability namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ baremetal_observability_namespace }}"
+        labels:
+          openshift.io/cluster-monitoring: "true"
+
+# This assumes that there already exists a secret called "ipmi-exporter-config" of contents:
+# ipmi-exporter-config.yaml:
+# modules:
+#   default:
+#     user: <username>
+#     pass: <password>
+#     driver: "LAN_2_0" (see man 8 ipmi-sensors)
+#     privilege: "user" (see man 5 freeipmi.conf)
+#     timeout: 10000
+#     collectors:
+#       - bmc
+#       - ipmi
+#       - chassis
+- name: Deploy IPMI exporter
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: ipmi-exporter
+        namespace: "{{ baremetal_observability_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: ipmi-exporter
+        template:
+           metadata:
+             labels:
+               app: ipmi-exporter
+           spec:
+             containers:
+             - name: ipmi-exporter
+               image: quay.io/prometheuscommunity/ipmi-exporter:latest
+               args:
+                 - "--config.file=/config/ipmi-exporter-config.yaml"
+               ports:
+               - containerPort: 9290
+                 name: ipmi-metrics
+               volumeMounts:
+               - name: ipmi-exporter-config
+                 mountPath: /config
+             volumes:
+             - name: ipmi-exporter-config
+               secret:
+                 secretName: ipmi-exporter-config
+
+- name: Create IPMI exporter service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: ipmi-exporter
+        namespace: "{{ baremetal_observability_namespace }}"
+        labels:
+          app: ipmi-exporter
+      spec:
+        selector:
+          app: ipmi-exporter
+        ports:
+          - name: http
+            port: 9290
+            targetPort: ipmi-metrics
+
+- name: Build ServiceMonitor endpoints
+  set_fact:
+    servicemonitor_endpoints: []
+
+- name: Add endpoint for each ipmi target
+  set_fact:
+    servicemonitor_endpoints: "{{ servicemonitor_endpoints + [new_endpoint] }}"
+  vars:
+    new_endpoint:
+      port: http
+      path: /ipmi
+      interval: "{{ default_scrape_interval }}"
+      relabelings:
+        - targetLabel: __param_target
+          replacement: "{{ item }}"
+        - sourceLabels: [__param_target]
+          targetLabel: instance
+        - targetLabel: __address__
+          replacement: "ipmi-exporter.{{ baremetal_observability_namespace }}.svc.cluster.local:9290"
+  loop: "{{ ipmi_addresses }}"
+
+- name: Create service monitor for ipmi exporter
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: monitoring.coreos.com/v1
+      kind: ServiceMonitor
+      metadata:
+        name: ipmi-service-monitor
+        namespace: "{{ baremetal_observability_namespace }}"
+      spec:
+        selector:
+          matchLabels:
+            app: ipmi-exporter
+        namespaceSelector:
+          matchNames:
+            - "{{ baremetal_observability_namespace }}"
+        endpoints: "{{ servicemonitor_endpoints }}"
