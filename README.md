@@ -1,37 +1,48 @@
 # Baremetal Observability Ansible Playbook
 
-An Ansible playbook that deploys IPMI monitoring infrastructure on OpenShift clusters to collect hardware metrics from baremetal nodes.
-
-In the future, this will also include SNMP metrics.
+An Ansible playbook that deploys Prometheus metric exporters on OpenShift clusters to collect hardware and network metrics from baremetal infrastructure. This is an implementation of the Open Sovereign AI Cloud (OSAC) [enhancement proposal](https://github.com/innabox/enhancement-proposals/pull/10).
 
 ## Overview
 
-This playbook automates the deployment of:
+This playbook automates the deployment of multiple metric exporters using a configurable inventory service:
 
-1. **Monitoring Namespace**: Creates a dedicated namespace with cluster monitoring labels
-2. **IPMI Exporter**: Collects hardware metrics (temperature, power, fan speeds, etc.) from baremetal nodes via IPMI
-3. **Service**: Exposes the IPMI exporter through this internal cluster service
-4. **ServiceMonitor**: Configures Prometheus to scrape IPMI metrics with proper relabeling
+1. **Monitoring Namespace**: Creates a dedicated `baremetal-observability` namespace
+2. **Inventory Service**: Is reusable across different types of inventory services
+3. **Metric Exporters**: Pick and choose which exporters to use
+4. **Configuration Management**: Creates default ConfigMaps and Secrets for exporter configurations
 
-## What it does
+## Configuration
 
-- Queries OpenStack to discover all baremetal nodes and their IPMI addresses
-- Extracts IPMI addresses with appropriate ports (defaults to 623)
-- Deploys IPMI exporter with configurable authentication
-- Creates Kubernetes services for the exporters
-- Generates ServiceMonitor configurations with proper relabelings for each IPMI target
-- Integrates with OpenShift cluster monitoring and ACM observability
+### Required Variables
+- `baremetal_observability_state`: Variable to indicate whether to deploy or destroy baremetal-observability
+
+### Optional Variables
+- `baremetal_observability_inventory_service`: Role name that provides BMC endpoint discovery
+- `baremetal_observability_exporters`: List of exporter roles to deploy (e.g., `['ipmi_exporter', 'snmp_exporter']`)
+- `baremetal_observability_namespace`: Namespace name (default: `baremetal-observability`)
+- `baremetal_observability_default_ipmi_port`: Default IPMI port (default: `623`)
+- `baremetal_observability_default_snmp_port`: Default SNMP port (default: `161`)
+- `baremetal_observability_default_scrape_interval`: Scraping interval (default: `60s`)
 
 ## Usage
 
-This is designed to run on cloudkit-aap after cluster installation (either OCP or baremetal) to enable hardware monitoring for baremetal infrastructure.
+### Prerequisites
+- OpenShift cluster with cluster monitoring enabled
+- Ansible with `kubernetes.core` and `openstack.cloud` collections
+- Access to BMC/IPMI endpoints from the cluster network
 
-Run this command to deploy:
-```
-ansible-playbook -i inventory playbook.yaml -e bmo_state=present
+### Installation
+```bash
+ansible-galaxy collection install -r requirements.yml
 ```
 
-Run this command to undeploy:
+### Deployment
+```bash
+ansible-playbook -i inventory playbook.yaml -e baremetal_observability_state=present -e baremetal_observability_inventory_service=openstack -e baremetal_observability_exporters='["ipmi_exporter","snmp_exporter"]'
 ```
-ansible-playbook -i inventory playbook.yaml -e bmo_state=absent`
+
+### Removal
+```bash
+# Remove all resources (deletes the baremetal-observability namespace)
+ansible-playbook -i inventory playbook.yaml -e baremetal_observability_state=absent
 ```

@@ -1,0 +1,155 @@
+# This assumes that there already exists:
+#   - a ConfigMap called "snmp-mibs"
+#   - a Secret called "snmp-generator"
+# Example generator.yml file: https://github.com/prometheus/snmp_exporter/tree/main/generator
+
+# vvvvvvvvvvvvvvvvvvvvvv FOR DEMO ONLY, WILL BE REPLACED vvvvvvvvvvvvvvvvvvvvvv
+- name: Find all MIB files
+  ansible.builtin.find:
+    paths: "{{ role_path }}/files/mibs"
+    patterns: "*"
+    file_type: file
+  register: mib_files
+
+- name: Build ConfigMap data
+  ansible.builtin.set_fact:
+    mib_data: "{{ mib_data | default({}) | combine({item | basename: lookup('file', item)}) }}"
+  loop: "{{ mib_files.files | map(attribute='path') | list }}"
+
+- name: Create ConfigMap for SNMP MIBs
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: snmp-mibs
+        namespace: "{{ baremetal_observability_namespace }}"
+      data: "{{ mib_data }}"
+
+- name: Create Secret for SNMP generator
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: snmp-generator
+        namespace: "{{ baremetal_observability_namespace }}"
+      type: Opaque
+      data:
+        generator.yml: "{{ lookup('file', 'generator.yml') | b64encode }}"
+# ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- name: Deploy SNMP exporter
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: snmp-exporter
+        namespace: "{{ baremetal_observability_namespace }}"
+      spec:
+        replicas: 1
+        selector:
+          matchLabels:
+            app: snmp-exporter
+        template:
+          metadata:
+            labels:
+              app: snmp-exporter
+          spec:
+            initContainers:
+              - name: generate-snmp-config
+                image: quay.io/prometheus/snmp-generator:latest
+                imagePullPolicy: Always
+                volumeMounts:
+                  - name: snmp-mibs
+                    mountPath: /mibs
+                  - name: snmp-generator
+                    mountPath: /generator.yml
+                    subPath: generator.yml
+                  - name: snmp-config
+                    mountPath: /snmp-config
+                args:
+                  - generate
+                  - --mibs-dir=/mibs
+                  - --generator-path=/generator.yml
+                  - --output-path=/snmp-config/snmp.yml
+            containers:
+              - name: snmp-exporter
+                image: quay.io/prometheus/snmp-exporter:latest
+                ports:
+                  - containerPort: 9116
+                    name: snmp-metrics
+                volumeMounts:
+                  - name: snmp-config
+                    mountPath: /etc/snmp_exporter
+            volumes:
+              - name: snmp-mibs
+                configMap:
+                  name: snmp-mibs
+              - name: snmp-generator
+                secret:
+                  secretName: snmp-generator
+              - name: snmp-config
+                emptyDir: {}
+
+- name: Create SNMP exporter service
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: snmp-exporter
+        namespace: "{{ baremetal_observability_namespace }}"
+        labels:
+          app: snmp-exporter
+      spec:
+        selector:
+          app: snmp-exporter
+        ports:
+          - name: http
+            port: 9116
+            targetPort: snmp-metrics
+
+# - name: Build ServiceMonitor endpoints
+#   ansible.builtin.set_fact:
+#     servicemonitor_endpoints: []
+#
+# - name: Add endpoint for each SNMP BMC endpoint
+#   ansible.builtin.set_fact:
+#     servicemonitor_endpoints: "{{ servicemonitor_endpoints + [new_endpoint] }}"
+#   vars:
+#     new_endpoint:
+#       port: http
+#       path: /snmp
+#       interval: "{{ baremetal_observability_default_scrape_interval }}"
+#       relabelings:
+#         - targetLabel: __param_target
+#           replacement: "{{ item }}"
+#         - sourceLabels: [__param_target]
+#           targetLabel: instance
+#         - targetLabel: __address__
+#           replacement: "snmp-exporter.{{ baremetal_observability_namespace }}.svc.cluster.local:9116"
+#   loop: "{{ bmc_endpoints }}"
+#
+# - name: Create service monitor for snmp exporter
+#   kubernetes.core.k8s:
+#     state: present
+#     definition:
+#       apiVersion: monitoring.coreos.com/v1
+#       kind: ServiceMonitor
+#       metadata:
+#         name: snmp-service-monitor
+#         namespace: "{{ baremetal_observability_namespace }}"
+#       spec:
+#         selector:
+#           matchLabels:
+#             app: snmp-exporter
+#         namespaceSelector:
+#           matchNames:
+#             - "{{ baremetal_observability_namespace }}"
+#         endpoints: "{{ servicemonitor_endpoints }}"

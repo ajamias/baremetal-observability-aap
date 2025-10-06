@@ -1,7 +1,7 @@
 modules:
   default:
-    user: <username>
-    pass: <password>
+    user: ""
+    pass: ""
     driver: "LAN_2_0" # see man 8 ipmi-sensors
     privilege: "user" # see man 5 freeipmi.conf
     timeout: 10000

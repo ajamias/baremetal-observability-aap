@@ -1,3 +1,4 @@
 baremetal_observability_namespace: baremetal-observability
-default_ipmi_port: 623
-default_scrape_interval: 60s
+baremetal_observability_default_ipmi_port: 623
+baremetal_observability_default_snmp_port: 161
+baremetal_observability_default_scrape_interval: 60s

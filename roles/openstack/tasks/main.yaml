@@ -1,0 +1,10 @@
+# This assumes that the openstack client can list the nodes on the OpenShift cluster
+- name: Get all baremetal node info
+  openstack.cloud.baremetal_node_info:
+  register: baremetal_node_info
+
+- name: Extract BMC addresses with ports
+  ansible.builtin.set_fact:
+    bmc_endpoints: >-
+      {{ baremetal_node_info.baremetal_nodes |
+        json_query('[].join(`:`,[driver_info.ipmi_address, to_string(driver_info.ipmi_terminal_port || default_ipmi_port)])') }}

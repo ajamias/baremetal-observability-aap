@@ -1,0 +1,15 @@
+argument_specs:
+  main:
+    author: Austin Jamias
+    options:
+      baremetal_observability_state:
+        type: str
+        required: true
+        choices:
+          - present
+          - absent
+      baremetal_observability_inventory_service:
+        type: str
+      baremetal_observability_exporters:
+        type: list
+        elements: str

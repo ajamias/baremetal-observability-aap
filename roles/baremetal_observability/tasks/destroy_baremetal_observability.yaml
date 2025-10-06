@@ -1,27 +1,3 @@
-- name: Remove ServiceMonitor
-  kubernetes.core.k8s:
-    state: absent
-    api_version: monitoring.coreos.com/v1
-    kind: ServiceMonitor
-    name: ipmi-service-monitor
-    namespace: "{{ baremetal_observability_namespace }}"
-
-- name: Remove Service
-  kubernetes.core.k8s:
-    state: absent
-    api_version: v1
-    kind: Service
-    name: ipmi-exporter
-    namespace: "{{ baremetal_observability_namespace }}"
-
-- name: Remove Deployment
-  kubernetes.core.k8s:
-    state: absent
-    api_version: apps/v1
-    kind: Deployment
-    name: ipmi-exporter
-    namespace: "{{ baremetal_observability_namespace }}"
-
 - name: Remove Namespace
   kubernetes.core.k8s:
     state: absent

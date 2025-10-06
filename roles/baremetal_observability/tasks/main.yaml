@@ -1,7 +1,7 @@
 - name: Create the system to monitor for baremetal metrics
-  when: bmo_state == 'present'
+  when: baremetal_observability_state == 'present'
   ansible.builtin.include_tasks: create_baremetal_observability.yaml
 
 - name: Destroy the system to monitor for baremetal metrics
-  when: bmo_state == 'absent'
+  when: baremetal_observability_state == 'absent'
   ansible.builtin.include_tasks: destroy_baremetal_observability.yaml
